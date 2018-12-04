@@ -126,14 +126,30 @@ class ONet(Network):
         layer_factory.new_conv(name='conv4', kernel_size=(2, 2), channels_output=128, stride_size=(1, 1),
                                padding='VALID', relu=False)
         layer_factory.new_prelu(name='prelu4')
-        layer_factory.new_fully_connected(name='fc1', output_count=256, relu=False)
+
+        ######## layers before this line belone to feature extraction module ########
+
+        ######## layers added to ONet after this line are output / bottleneck layers ########
+
+        # commonly shared fully connected layer
+        # TODO: try larger output count
+        layer_factory.new_fully_connected(name='fc1', output_count=256, relu=False, trainable=self.is_trainable())
+        # layer_factory.new_fully_connected(name='fc1', output_count=1024, relu=False, trainable=self.is_trainable())
         layer_factory.new_prelu(name='prelu5')
-        layer_factory.new_fully_connected(name='fc2-1', output_count=2, relu=False)
+
+        # (logistic based) confidence / probability output layer
+        layer_factory.new_fully_connected(name='fc2-1', output_count=2, relu=False, trainable=self.is_trainable())
         layer_factory.new_softmax(name='prob1', axis=1)
 
-        layer_factory.new_fully_connected(name='fc2-2', output_count=4, relu=False, input_layer_name='prelu5')
+        # `( x_base, y_base, width, height )`-output layer
+        layer_factory.new_fully_connected(name='fc2-2', output_count=4, relu=False, trainable=self.is_trainable(),
+                                          input_layer_name='prelu5')
 
+        # landmark output layer
+        # TODO: to 106-point, i.e. 106 * 2 = 212 outputs
         layer_factory.new_fully_connected(name='fc2-3', output_count=10, relu=False, input_layer_name='prelu5')
+        # layer_factory.new_fully_connected(name='fc2-3', output_count=68*2, relu=False, trainable=self.is_trainable(),
+        #                                   input_layer_name='prelu5')
 
     def _feed(self, image):
         return self._session.run(['onet/fc2-2/fc2-2:0', 'onet/fc2-3/fc2-3:0', 'onet/prob1:0'],
@@ -161,11 +177,11 @@ class MTCNN(object):
     """
     Allows to perform MTCNN Detection ->
         a) Detection of faces (with the confidence probability)
-        b) Detection of keypoints (left eye, right eye, nose, mouth_left, mouth_right)
+        b) Detection of keypoints (TODO: 106 points)
     """
 
     def __init__(self, weights_file: str=None, min_face_size: int=20, steps_threshold: list=None,
-                 scale_factor: float=0.709):
+                 scale_factor: float=0.709, trainable: bool=False, save_path: str=None):
         """
         Initializes the MTCNN.
         :param weights_file: file uri with the weights of the P, R and O networks from MTCNN. By default it will load
@@ -173,6 +189,8 @@ class MTCNN(object):
         :param min_face_size: minimum size of the face to detect
         :param steps_threshold: step's thresholds values
         :param scale_factor: scale factor
+        :param trainable: if `True`, bottleneck layers of the MTCNN instance will be set to trainable
+        :param save_path: if not `None`, a `.pb` model will be saved to this location
         """
         if steps_threshold is None:
             steps_threshold = [0.6, 0.7, 0.7]
@@ -183,6 +201,8 @@ class MTCNN(object):
         self.__min_face_size = min_face_size
         self.__steps_threshold = steps_threshold
         self.__scale_factor = scale_factor
+        self.__trainable = trainable
+        self.__save_path = save_path
 
         config = tf.ConfigProto(log_device_placement=False)
         config.gpu_options.allow_growth = True
@@ -193,28 +213,74 @@ class MTCNN(object):
             self.__session = tf.Session(config=config, graph=self.__graph)
 
             weights = np.load(weights_file).item()
-            self.__pnet = PNet(self.__session, False)
-            self.__pnet.set_weights(weights['PNet'])
+            self.__pnet = PNet(self.__session, trainable=self.__trainable)
+            self.__pnet.set_weights(weights['PNet'], ignore_missing=True)
 
-            self.__rnet = RNet(self.__session, False)
-            self.__rnet.set_weights(weights['RNet'])
+            self.__rnet = RNet(self.__session, trainable=self.__trainable)
+            self.__rnet.set_weights(weights['RNet'], ignore_missing=True)
 
-            self.__onet = ONet(self.__session, False)
-            self.__onet.set_weights(weights['ONet'])
+            self.__onet = ONet(self.__session, trainable=self.__trainable)
+            self.__onet.set_weights(weights['ONet'], ignore_missing=True)
+
+            if self.__save_path:
+                from tensorflow.saved_model import simple_save
+                inputs = {
+                    'pnet/image_in': self.__pnet.get_layer('data'),
+                    'rnet/window_in': self.__rnet.get_layer('data'),
+                    'onet/window_in': self.__onet.get_layer('data')
+                }
+                outputs = {
+                    'pnet/prob_out': self.__pnet.get_layer('prob1'),
+                    'pnet/window_coord_out': self.__pnet.get_layer('conv4-2'),
+                    'rnet/prob_out': self.__rnet.get_layer('prob1'),
+                    'rnet/window_coord_out': self.__rnet.get_layer('fc2-2'),
+                    'onet/prob_out': self.__onet.get_layer('prob1'),
+                    'onet/window_coord_out': self.__onet.get_layer('fc2-2'),
+                    'onet/five_points_out': self.__onet.get_layer('fc2-3')
+                }
+                # inputs = {
+                #     'pnet/image_in': tf.get_variable('pnet/input:0'),
+                #     'rnet/window_in': tf.get_variable('rnet/input:0'),
+                #     'onet/window_in': tf.get_variable('onet/input:0')
+                # }
+                # outputs = {
+                #     'pnet/prob_out': tf.get_variable('pnet/prob1:0'),
+                #     'pnet/window_coord_out': tf.get_variable('pnet/conv4-2/BiasAdd:0'),
+                #     'rnet/prob_out': tf.get_variable('rnet/prob1:0'),
+                #     'rnet/window_coord_out': tf.get_variable('rnet/fc2-2/fc2-2:0'),
+                #     'onet/prob_out': tf.get_variable('onet/prob1:1'),
+                #     'onet/window_coord_out': tf.get_variable('onet/fc2-2/fc2-2:0'),
+                #     # 'onet/five_points_out': tf.get_variable('onet/fc2-3/fc2-3:0')
+                # }
+                from pprint import pprint
+                pprint(inputs)
+                pprint(outputs)
+                simple_save(self.__session, self.__save_path, inputs, outputs)
+                # from tensorflow.train import Saver
+                # self.__saver = Saver()
+                # self.__saver.save(self.__session, './data/test.ckpt')
 
         weights_file.close()
 
     @property
+    def session(self):
+        return self.__session
+
+    @property
+    def onet(self):
+        return self.__onet
+
+    @property
     def min_face_size(self):
         return self.__min_face_size
-    
+
     @min_face_size.setter
     def min_face_size(self, mfc=20):
         try:
             self.__min_face_size = int(mfc)
         except ValueError:
             self.__min_face_size = 20
-    
+
     def __compute_scale_pyramid(self, m, min_layer):
         scales = []
         factor_count = 0
@@ -248,29 +314,35 @@ class MTCNN(object):
 
     @staticmethod
     def __generate_bounding_box(imap, reg, scale, t):
+        '''
+        Generate bounding box using heatmap.
+        :param imap: (?, ?, ?, 2) probability of face at point level
+        :param reg: TODO:
+        :param scale: TODO:
+        :param t: threashold value
+        '''
 
         # use heatmap to generate bounding boxes
         stride = 2
         cellsize = 12
 
-        imap = np.transpose(imap)
-        dx1 = np.transpose(reg[:, :, 0])
-        dy1 = np.transpose(reg[:, :, 1])
-        dx2 = np.transpose(reg[:, :, 2])
-        dy2 = np.transpose(reg[:, :, 3])
+        imap = np.transpose(imap)   # raw heatmap based on probs
+        dx1 = np.transpose(reg[:, :, 0])    # left edge
+        dy1 = np.transpose(reg[:, :, 1])    # top edge
+        dx2 = np.transpose(reg[:, :, 2])    # width
+        dy2 = np.transpose(reg[:, :, 3])    # height
 
-        y, x = np.where(imap >= t)
+        y, x = np.where(imap >= t)  # downward / rightward indices of *heat points*
 
-        if y.shape[0] == 1:
-            dx1 = np.flipud(dx1)
+        if y.shape[0] == 1:     # only 1 face detected
+            dx1 = np.flipud(dx1)    # flip upside down
             dy1 = np.flipud(dy1)
             dx2 = np.flipud(dx2)
             dy2 = np.flipud(dy2)
 
-        score = imap[(y, x)]
-        reg = np.transpose(np.vstack([dx1[(y, x)], dy1[(y, x)], dx2[(y, x)], dy2[(y, x)]]))
-
-        if reg.size == 0:
+        score = imap[(y, x)]    # filtered scores, low prob points discarded
+        reg = np.transpose(np.vstack([dx1[(y, x)], dy1[(y, x)], dx2[(y, x)], dy2[(y, x)]]))     # raw bounding boxes
+        if reg.size == 0:   # keep skeleton if empty
             reg = np.empty(shape=(0, 3))
 
         bb = np.transpose(np.vstack([y, x]))
@@ -396,7 +468,7 @@ class MTCNN(object):
     def detect_faces(self, img) -> list:
         """
         Detects bounding boxes from the specified image.
-        :param img: image to process
+        :param img: image to process (OpenCV-flavoured BGR uint8 array)
         :return: list containing all the bounding boxes detected with their keypoints.
         """
         if img is None or not hasattr(img, "shape"):
@@ -420,6 +492,7 @@ class MTCNN(object):
         [total_boxes, points] = result
 
         bounding_boxes = []
+        points_count = points.shape[0] // 2
 
         for bounding_box, keypoints in zip(total_boxes, points.T):
 
@@ -427,13 +500,17 @@ class MTCNN(object):
                     'box': [int(bounding_box[0]), int(bounding_box[1]),
                             int(bounding_box[2]-bounding_box[0]), int(bounding_box[3]-bounding_box[1])],
                     'confidence': bounding_box[-1],
-                    'keypoints': {
-                        'left_eye': (int(keypoints[0]), int(keypoints[5])),
-                        'right_eye': (int(keypoints[1]), int(keypoints[6])),
-                        'nose': (int(keypoints[2]), int(keypoints[7])),
-                        'mouth_left': (int(keypoints[3]), int(keypoints[8])),
-                        'mouth_right': (int(keypoints[4]), int(keypoints[9])),
-                    }
+                    # 'keypoints': {
+                    #     'left_eye': (int(keypoints[0]), int(keypoints[5])),
+                    #     'right_eye': (int(keypoints[1]), int(keypoints[6])),
+                    #     'nose': (int(keypoints[2]), int(keypoints[7])),
+                    #     'mouth_left': (int(keypoints[3]), int(keypoints[8])),
+                    #     'mouth_right': (int(keypoints[4]), int(keypoints[9])),
+                    # }
+                    'keypoints': [
+                        ( keypoints[idx], keypoints[idx + points_count] )
+                        for idx in range(points_count)
+                    ]
                 }
             )
 
@@ -458,11 +535,15 @@ class MTCNN(object):
 
             out = self.__pnet.feed(img_y)
 
-            out0 = np.transpose(out[0], (0, 2, 1, 3))
-            out1 = np.transpose(out[1], (0, 2, 1, 3))
+            out0 = np.transpose(out[0], (0, 2, 1, 3))   # (?, ?, ?, 4)
+            out1 = np.transpose(out[1], (0, 2, 1, 3))   # (?, ?, ?, 2)
 
-            boxes, _ = self.__generate_bounding_box(out1[0, :, :, 1].copy(),
-                                                    out0[0, :, :, :].copy(), scale, self.__steps_threshold[0])
+            boxes, _ = self.__generate_bounding_box(
+                out1[0, :, :, 1].copy(),    # using probability scores as weights in heatmap
+                out0[0, :, :, :].copy(),
+                scale,
+                self.__steps_threshold[0]
+            )
 
             # inter-scale nms
             pick = self.__nms(boxes.copy(), 0.5, 'Union')
@@ -578,20 +659,30 @@ class MTCNN(object):
             else:
                 return np.empty(shape=(0,)), np.empty(shape=(0,))
 
+        # preprocessing / normalization (sort of)
         tempimg = (tempimg - 127.5) * 0.0078125
-        tempimg1 = np.transpose(tempimg, (3, 1, 0, 2))
+        tempimg1 = np.transpose(tempimg, (3, 1, 0, 2))  # transposing back to *batch-first* format
 
+        # pass to output network for final model output (group)
         out = self.__onet.feed(tempimg1)
+
+        # ( x, y, w, h ) coordinates
         out0 = np.transpose(out[0])
+
+        # landmarks coordinates (flattened)
         out1 = np.transpose(out[1])
+
+        # raw confidence
         out2 = np.transpose(out[2])
+        sore = out2[1, :]
 
-        score = out2[1, :]
-
+        # landmark coordinates (transposed, flattened)
         points = out1
 
+        # threashold filter (for stage 3) based on raw confidence
         ipass = np.where(score > self.__steps_threshold[2])
 
+        # landmark coordinates (flattened, filtered, transposed)
         points = points[:, ipass[0]]
 
         total_boxes = np.hstack([total_boxes[ipass[0], 0:4].copy(), np.expand_dims(score[ipass].copy(), 1)])
@@ -601,8 +692,17 @@ class MTCNN(object):
         w = total_boxes[:, 2] - total_boxes[:, 0] + 1
         h = total_boxes[:, 3] - total_boxes[:, 1] + 1
 
-        points[0:5, :] = np.tile(w, (5, 1)) * points[0:5, :] + np.tile(total_boxes[:, 0], (5, 1)) - 1
-        points[5:10, :] = np.tile(h, (5, 1)) * points[5:10, :] + np.tile(total_boxes[:, 1], (5, 1)) - 1
+        # first half and second half are for x and y coordinates, respectively
+        points_mididx = points.shape[0] // 2
+        # assert points_mididx * 2 == points.shape[0]     # DEBUG
+        points[0:points_mididx, :] = (
+            np.tile(w, (points_mididx, 1)) * points[0:points_mididx, :]
+            + np.tile(total_boxes[:, 0], (points_mididx, 1)) - 1
+        )
+        points[points_mididx:, :] = (
+            np.tile(h, (points_mididx, 1)) * points[points_mididx:, :]
+            + np.tile(total_boxes[:, 1], (points_mididx, 1)) - 1
+        )
 
         if total_boxes.shape[0] > 0:
             total_boxes = self.__bbreg(total_boxes.copy(), np.transpose(mv))

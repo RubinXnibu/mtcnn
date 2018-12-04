@@ -86,15 +86,23 @@ class Network(object):
 
         with tf.variable_scope(network_name):
             for layer_name in weights_values:
+                print('loading "{}/{}" parameters...'.format(network_name, layer_name))
                 with tf.variable_scope(layer_name, reuse=True):
                     for param_name, data in weights_values[layer_name].items():
+                        print('    loading "{}/{}/{}": '.format(network_name, layer_name, param_name), end='')
                         try:
                             var = tf.get_variable(param_name)
                             self._session.run(var.assign(data))
+                            print('succeeded with shape {}!'.format(var.shape))
 
-                        except ValueError:
-                            if not ignore_missing:
-                                raise
+                        except ValueError as e:
+                            print('failed: {}! '.format(e))
+                            choice = input('        stop now? ')
+                            if not ignore_missing and choice not in 'yY':
+                                print('')
+                                raise e
+                            self._session.run(var.assign(tf.ones(var.shape)))
+                            print('        (ignored)')
 
     def feed(self, image):
         """

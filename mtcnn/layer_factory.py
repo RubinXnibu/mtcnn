@@ -69,14 +69,15 @@ class LayerFactory(object):
 
         return vectorized_input, dim
 
-    def __make_var(self, name: str, shape: list):
+    def __make_var(self, name: str, shape: list, trainable: bool=False):
         """
         Creates a tensorflow variable with the given name and shape.
         :param name: name to set for the variable.
         :param shape: list defining the shape of the variable.
+        :param trainable: if this variable is trainable
         :return: created TF variable.
         """
-        return tf.get_variable(name, shape, trainable=self.__network.is_trainable())
+        return tf.get_variable(name, shape, trainable=trainable)
 
     def new_feed(self, name: str, layer_shape: tuple):
         """
@@ -90,7 +91,8 @@ class LayerFactory(object):
 
     def new_conv(self, name: str, kernel_size: tuple, channels_output: int,
                  stride_size: tuple, padding: str='SAME',
-                 group: int=1, biased: bool=True, relu: bool=True, input_layer_name: str=None):
+                 group: int=1, biased: bool=True, relu: bool=True, trinable: bool=False,
+                 input_layer_name: str=None):
         """
         Creates a convolution layer for the network.
         :param name: name for the layer
@@ -101,6 +103,7 @@ class LayerFactory(object):
         :param group: groups for the kernel operation. More info required.
         :param biased: boolean flag to set if biased or not.
         :param relu: boolean flag to set if ReLu should be applied at the end of the layer or not.
+        :param trainable: if this layer is trainable
         :param input_layer_name: name of the input layer for this layer. If None, it will take the last added layer of
         the network.
         """
@@ -121,13 +124,13 @@ class LayerFactory(object):
                                                           padding=padding)
 
         with tf.variable_scope(name) as scope:
-            kernel = self.__make_var('weights', shape=[kernel_size[1], kernel_size[0], channels_input // group, channels_output])
+            kernel = self.__make_var('weights', shape=[kernel_size[1], kernel_size[0], channels_input // group, channels_output], trainable=trinable)
 
             output = convolve(input_layer, kernel)
 
             # Add the biases, if required
             if biased:
-                biases = self.__make_var('biases', [channels_output])
+                biases = self.__make_var('biases', [channels_output], trainable=trinable)
                 output = tf.nn.bias_add(output, biases)
 
             # Apply ReLU non-linearity, if required
@@ -137,17 +140,18 @@ class LayerFactory(object):
 
         self.__network.add_layer(name, layer_output=output)
 
-    def new_prelu(self, name: str, input_layer_name: str=None):
+    def new_prelu(self, name: str, trainable: bool=False, input_layer_name: str=None):
         """
         Creates a new prelu layer with the given name and input.
         :param name: name for this layer.
+        :param trainable: if this layer is trainable
         :param input_layer_name: name of the layer that serves as input for this one.
         """
         input_layer = self.__network.get_layer(input_layer_name)
 
         with tf.variable_scope(name):
             channels_input = int(input_layer.get_shape()[-1])
-            alpha = self.__make_var('alpha', shape=[channels_input])
+            alpha = self.__make_var('alpha', shape=[channels_input], trainable=trainable)
             output = tf.nn.relu(input_layer) + tf.multiply(alpha, -tf.nn.relu(-input_layer))
 
         self.__network.add_layer(name, layer_output=output)
@@ -176,13 +180,15 @@ class LayerFactory(object):
 
         self.__network.add_layer(name, layer_output=output)
 
-    def new_fully_connected(self, name: str, output_count: int, relu=True, input_layer_name: str=None):
+    def new_fully_connected(self, name: str, output_count: int, relu=True, trainable: bool=False,
+                            input_layer_name: str=None):
         """
         Creates a new fully connected layer.
 
         :param name: name for the layer.
         :param output_count: number of outputs of the fully connected layer.
         :param relu: boolean flag to set if ReLu should be applied at the end of this layer.
+        :param trainable: if this layer is trainable
         :param input_layer_name: name of the input layer for this layer. If None, it will take the last added layer of
         the network.
         """
@@ -191,8 +197,8 @@ class LayerFactory(object):
             input_layer = self.__network.get_layer(input_layer_name)
             vectorized_input, dimension = self.vectorize_input(input_layer)
 
-            weights = self.__make_var('weights', shape=[dimension, output_count])
-            biases = self.__make_var('biases', shape=[output_count])
+            weights = self.__make_var('weights', shape=[dimension, output_count], trainable=trainable)
+            biases = self.__make_var('biases', shape=[output_count], trainable=trainable)
             operation = tf.nn.relu_layer if relu else tf.nn.xw_plus_b
 
             fc = operation(vectorized_input, weights, biases, name=name)
