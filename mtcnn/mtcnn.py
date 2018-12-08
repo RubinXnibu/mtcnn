@@ -307,7 +307,7 @@ class MTCNN(object):
 
         im_data = cv2.resize(image, (width_scaled, height_scaled), interpolation=cv2.INTER_AREA)
 
-        # Normalize the image's pixels
+        # Normalize image pixels' values
         im_data_normalized = (im_data - 127.5) * 0.0078125
 
         return im_data_normalized
@@ -332,7 +332,7 @@ class MTCNN(object):
         dx2 = np.transpose(reg[:, :, 2])    # width
         dy2 = np.transpose(reg[:, :, 3])    # height
 
-        y, x = np.where(imap >= t)  # downward / rightward indices of *heat points*
+        y, x = np.where(imap >= t)  # downward / rightward indices of selected *heat points*
 
         if y.shape[0] == 1:     # only 1 face detected
             dx1 = np.flipud(dx1)    # flip upside down
@@ -349,7 +349,11 @@ class MTCNN(object):
 
         q1 = np.fix((stride * bb + 1)/scale)
         q2 = np.fix((stride * bb + cellsize)/scale)
-        boundingbox = np.hstack([q1, q2, np.expand_dims(score, 1), reg])
+        boundingbox = np.hstack([q1, q2, np.expand_dims(score, 1), reg])    # shape: [ None, 9 ]
+
+        # from pprint import pprint
+        # print('__generate_bounding_box: boundingbox')
+        # pprint(boundingbox)
 
         return boundingbox, reg
 
@@ -546,7 +550,7 @@ class MTCNN(object):
             )
 
             # inter-scale nms
-            pick = self.__nms(boxes.copy(), 0.5, 'Union')
+            pick = self.__nms(boxes.copy(), 0.5, 'Union')   # array of boolean values
             if boxes.size > 0 and pick.size > 0:
                 boxes = boxes[pick, :]
                 total_boxes = np.append(total_boxes, boxes, axis=0)
@@ -608,8 +612,8 @@ class MTCNN(object):
 
         out = self.__rnet.feed(tempimg1)
 
-        out0 = np.transpose(out[0])
-        out1 = np.transpose(out[1])
+        out0 = np.transpose(out[0])     # shape: [ None, 4 ]
+        out1 = np.transpose(out[1])     # probabilities
 
         score = out1[1, :]
 
@@ -674,7 +678,7 @@ class MTCNN(object):
 
         # raw confidence
         out2 = np.transpose(out[2])
-        sore = out2[1, :]
+        score = out2[1, :]
 
         # landmark coordinates (transposed, flattened)
         points = out1
