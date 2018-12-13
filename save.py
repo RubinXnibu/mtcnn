@@ -2,6 +2,10 @@
 
 import os
 
+
+INPUT_BOX_SIZE = 1024
+
+
 SAVE_DIR_BASE = './saves'
 SAVE_NAME = 'test'
 
@@ -33,7 +37,7 @@ class PNetFixed(Network):
     def _config(self):
         layer_factory = LayerFactory(self)
 
-        layer_factory.new_feed(name='data', layer_shape=(None, 1024, 1024, 3))
+        layer_factory.new_feed(name='data', layer_shape=(None, INPUT_BOX_SIZE, INPUT_BOX_SIZE, 3))
         layer_factory.new_conv(name='conv1', kernel_size=(3, 3), channels_output=10, stride_size=(1, 1),
                                padding='VALID', relu=False)
         layer_factory.new_prelu(name='prelu1')
