@@ -66,22 +66,23 @@ with graph.as_default():
         pnet = PNetFixed(session=sess)
         pnet.set_weights(weights['PNet'], ignore_missing=True)
 
+        tsr_img_in = pnet.get_layer('data')
+        tsr_raw_reg_out = pnet.get_layer('conv4-2')
+        tsr_prob_out = pnet.get_layer('prob1')
+
+        print('img_in.shape:', tsr_img_in.shape)
+        print('raw_reg_out.shape:', tsr_raw_reg_out.shape)
+        print('prob_out.shape:', tsr_prob_out.shape)
+
         converter = tf.contrib.lite.TFLiteConverter.from_session(
             sess=sess,
             input_tensors=[
-                pnet.get_layer('data')
+                tsr_img_in
             ],
             output_tensors=[
-                pnet.get_layer('conv4-2'),
-                pnet.get_layer('prob1')
+                tsr_raw_reg_out,
+                tsr_prob_out
             ]
-            # input_tensors={
-            #     'pnet/window_in': pnet.get_layer('data')
-            # },
-            # output_tensors={
-            #     'pnet/raw_reg_out': pnet.get_layer('conv4-2'),
-            #     'pnet/prob_out': pnet.get_layer('prob1')
-            # }
         )
         tflite_pnet = converter.convert()
         open('saves/pnet.tflite', 'wb').write(tflite_pnet)
