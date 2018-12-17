@@ -16,7 +16,7 @@
 
 ### RNet - Refine Network
 
-- 签名：`originalrnet`
+- 签名：`rnet`
 - 输入：滑动窗口
     - 大小：`( None, 24, 24, 3 )`
 - 输出：预测框、置信度
@@ -24,7 +24,7 @@
 
 ### ONet - Output Network
 
-- 签名：`originalonet`
+- 签名：`onet`
 - 输入：人脸窗口
     - 大小：`( None, 48, 48, 3 )`
 - 输出：预测框、人脸关键点（5 点）、置信度
