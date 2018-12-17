@@ -92,7 +92,7 @@ with graph.as_default():
         print('landmark_out.shape:', tsr_landmark_out.shape)
         print('prob_out.shape:', tsr_prob_out.shape)
 
-        converter = tf.contrib.lite.TFLiteConverter.from_session(
+        converter = tf.lite.TFLiteConverter.from_session(
             sess=sess,
             input_tensors=[
                 tsr_window_in
