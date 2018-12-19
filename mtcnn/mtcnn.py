@@ -531,16 +531,47 @@ class MTCNN(object):
         total_boxes = np.empty((0, 9))
         status = stage_status
 
-        for scale in scales:
+        # make folder for inspection output
+        import os
+        if not os.path.exists('./inspect'):
+            os.makedirs('./inspect')
+
+        for idx, scale in enumerate(scales):
+
+            # prepare output directory
+            if not os.path.exists('./inspect/{}'.format(idx)):
+                os.makedirs('./inspect/{}'.format(idx))
+            for file_ in os.listdir('./inspect/{}'.format(idx)):
+                os.remove('./inspect/{}/{}'.format(idx, file_))
+
+            # record scale
+            with open('./inspect/{}/scale.txt'.format(idx), 'r') as file_:
+                file_.write('{}'.format(scale))
+
             scaled_image = self.__scale_image(image, scale)
 
             img_x = np.expand_dims(scaled_image, 0)
             img_y = np.transpose(img_x, (0, 2, 1, 3))
 
+            # record input image for handy comparison
+            with open('./inspect/{}/input.jpg', 'rb') as file_:
+                # TODO:
+                pass
+
+            print('scale: {}, img_x.shape: {}, img_y.shape: {}'
+                  .format(scale, img_x.shape, img_y.shape))
+
+            # from matplotlib import pyplot as plt
+            # plt.imshow(img_y[0]); plt.show()
+
             out = self.__pnet.feed(img_y)
 
             out0 = np.transpose(out[0], (0, 2, 1, 3))   # (?, ?, ?, 4)
             out1 = np.transpose(out[1], (0, 2, 1, 3))   # (?, ?, ?, 2)
+
+            from matplotlib import pyplot as plt
+            plt.imshow(out1[0, :, :, 1]); plt.show()
+            # print(out1[0, :, :, 1].shape)
 
             boxes, _ = self.__generate_bounding_box(
                 out1[0, :, :, 1].copy(),    # using probability scores as weights in heatmap
