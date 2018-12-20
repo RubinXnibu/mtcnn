@@ -43,6 +43,10 @@ from mtcnn.exceptions import InvalidImage
 __author__ = "Iván de Paz Centeno"
 
 
+import os
+from matplotlib import pyplot as plt
+
+
 class PNet(Network):
     """
     Network to propose areas with faces.
@@ -531,8 +535,10 @@ class MTCNN(object):
         total_boxes = np.empty((0, 9))
         status = stage_status
 
+        orig_size = tuple(reversed(image.shape[:2]))
+        # print(orig_size)
+
         # make folder for inspection output
-        import os
         if not os.path.exists('./inspect'):
             os.makedirs('./inspect')
 
@@ -545,18 +551,17 @@ class MTCNN(object):
                 os.remove('./inspect/{}/{}'.format(idx, file_))
 
             # record scale
-            with open('./inspect/{}/scale.txt'.format(idx), 'r') as file_:
+            with open('./inspect/{}/scale.txt'.format(idx), 'w') as file_:
                 file_.write('{}'.format(scale))
 
             scaled_image = self.__scale_image(image, scale)
 
             img_x = np.expand_dims(scaled_image, 0)
+            # plt.imshow(img_x[0]); plt.show()
             img_y = np.transpose(img_x, (0, 2, 1, 3))
 
             # record input image for handy comparison
-            with open('./inspect/{}/input.jpg', 'rb') as file_:
-                # TODO:
-                pass
+            cv2.imwrite('./inspect/{}/input.jpg'.format(idx), img_y[0] * 255)
 
             print('scale: {}, img_x.shape: {}, img_y.shape: {}'
                   .format(scale, img_x.shape, img_y.shape))
@@ -569,9 +574,17 @@ class MTCNN(object):
             out0 = np.transpose(out[0], (0, 2, 1, 3))   # (?, ?, ?, 4)
             out1 = np.transpose(out[1], (0, 2, 1, 3))   # (?, ?, ?, 2)
 
-            from matplotlib import pyplot as plt
-            plt.imshow(out1[0, :, :, 1]); plt.show()
-            # print(out1[0, :, :, 1].shape)
+            # save output to image
+            cv2.imwrite('./inspect/{}/prob_1.jpg'.format(idx), out1[0, :, :, 1] * 255)
+
+            # calculate hybrid mask
+            hybrid = cv2.resize(img_x[0], orig_size)
+            raw_mask = cv2.resize(out1[0, :, :, 1].transpose([1, 0, 2]), orig_size) * 255
+            print(raw_mask.shape)
+            # plt.imshow(raw_mask); plt.show()
+            gaussian_mask = cv2.GaussianBlur(raw_mask, [32] * 2, 0)
+            hybrid *= gaussian_mask
+            cv2.imwrite('./inspect/{}/hybrid.jpg', hybrid)
 
             boxes, _ = self.__generate_bounding_box(
                 out1[0, :, :, 1].copy(),    # using probability scores as weights in heatmap
